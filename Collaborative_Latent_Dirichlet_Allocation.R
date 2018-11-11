@@ -21,7 +21,7 @@ library(ggplot2)
 k <- 20   #トピック数
 hh <- 5000   #ユーザー数
 item <- 2000   #アイテム数
-g <- 1000   #語彙数
+g <- 1200   #語彙数
 pt <- rtpois(hh, rgamma(hh, 20, 0.2), a=0, b=Inf)   #評価件数
 hhpt <- sum(pt)   #総評価件数
 w <- extraDistr::rtpois(item, rgamma(item, 30, 0.2), a=0, b=Inf)   #アイテムの単語数
