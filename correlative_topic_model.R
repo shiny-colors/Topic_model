@@ -3,9 +3,8 @@ library(MASS)
 library(lda)
 library(RMeCab)
 library(matrixStats)
-detach("package:gtools", unload=TRUE)
+library(Matrix)
 library(bayesm)
-library(ExtDist)
 library(extraDistr)
 library(reshape2)
 library(dplyr)
@@ -32,7 +31,6 @@ corrM <- function(col, lower, upper, eigen_lower, eigen_upper){
   x.modified <- P %*% Lambda.modified %*% t(P)
   normalization.factor <- matrix(diag(x.modified),nrow = nrow(x.modified),ncol=1)^0.5
   Sigma <- x.modified <- x.modified / (normalization.factor %*% t(normalization.factor))
-  eigen(x.modified)
   diag(Sigma) <- 1
   round(Sigma, digits=3)
   return(Sigma)
@@ -50,6 +48,7 @@ covmatrix <- function(col, corM, lower, upper){
   }
   diag(c) <- m
   cc <- c * corM
+  
   #固有値分解で強制的に正定値行列に修正する
   UDU <- eigen(cc)
   val <- UDU$values
@@ -63,235 +62,301 @@ covmatrix <- function(col, corM, lower, upper){
 
 ####データの発生####
 #set.seed(423943)
-#文書データの設定
-k <- 8   #トピック数
-d <- 2000   #文書数
-v <- 300   #語彙数
-w <- rpois(d, rgamma(d, 160, 1.0))   #1文書あたりの単語数
+##データの設定
+k <- 15   #トピック数
+d <- 3000   #文書数
+v <- 1200   #語彙数
+w <- rpois(d, rgamma(d, 35, 0.25))   #1文書あたりの単語数
+f <- sum(w)   #総単語数
 
+##IDとインデックスの設定
 #IDの設定
-word_id <- rep(1:d, w)
+d_id <- rep(1:d, w)
+t_id <- as.numeric(unlist(tapply(1:f, d_id, rank)))
 
-##パラメータの設定
-alpha1 <- rep(0.25, v)   #単語のディレクリ事前分布のパラメータ
-
-#多変量正規分布のパラメータを設定
-alpha0 <- rep(0, k-1)   #文書ののパラメータ
-tau0 <- corrM(k-1, -0.6, 0.9, 0.01, 0.2)
-sigma0 <- covmatrix(k-1, tau0, 2.5, 3.0)$covariance
-
-#多変量正規分布からの乱数を多項ロジット変換して文書トピックを設定
-mv <- cbind(mvrnorm(d, alpha0, sigma0), 0)
-theta0 <- exp(mv) / rowSums(exp(mv))
-
-#ディレクリ乱数の発生
-phi0 <- extraDistr::rdirichlet(k, alpha1)   #単語のトピック分をディレクリ分布から発生
-
-##多項分布からトピックおよび単語データを発生
-WX <- matrix(0, nrow=d, ncol=v)
-Z1 <- list()
-
-#文書ごとにトピックと単語を逐次生成
+#インデックスの設定
+d_index <- list()
 for(i in 1:d){
-  print(i)
-
-  #文書のトピック分布を発生
-  z1 <- t(rmultinom(w[i], 1, theta0[i, ]))   #文書のトピック分布を発生
-  
-  #文書のトピック分布から単語を発生
-  zn <- z1 %*% c(1:k)   #0,1を数値に置き換える
-  zdn <- cbind(zn, z1)   #apply関数で使えるように行列にしておく
-  wn <- t(apply(zdn, 1, function(x) rmultinom(1, 1, phi0[x[1], ])))   #文書のトピックから単語を生成
-  wdn <- colSums(wn)   #単語ごとに合計して1行にまとめる
-  WX[i, ] <- wdn  
-  
-  #発生させたトピックを格納
-  Z1[[i]] <- zdn[, 1]
-}
-storage.mode(WX) <- "integer"   #データ行列を整数型行列に変更
-
-
-####トピックモデルのためのデータと関数の準備####
-##それぞれの文書中の単語の出現および補助情報の出現をベクトルに並べる
-##データ推定用IDを作成
-ID_list <- list()
-wd_list <- list()
-
-#求人ごとに求人IDおよび単語IDを作成
-for(i in 1:nrow(WX)){
-  print(i)
-  
-  #単語のIDベクトルを作成
-  ID_list[[i]] <- rep(i, w[i])
-  num1 <- (WX[i, ] > 0) * (1:v)
-  num2 <- subset(num1, num1 > 0)
-  W1 <- WX[i, (WX[i, ] > 0)]
-  number <- rep(num2, W1)
-  wd_list[[i]] <- number
+  d_index[[i]] <- which(d_id==i)
 }
 
-#リストをベクトルに変換
-ID_d <- unlist(ID_list)
-wd <- unlist(wd_list)
-
-##インデックスを作成
-doc_list <- list()
-word_list <- list()
-for(i in 1:length(unique(ID_d))) {doc_list[[i]] <- subset(1:length(ID_d), ID_d==i)}
-for(i in 1:length(unique(wd))) {word_list[[i]] <- subset(1:length(wd), wd==i)}
-gc(); gc()
-
-x %*% etad[4, ]
-t(x %*% t(etad))[4, ]
-
-####マルコフ連鎖モンテカルロ法で対応トピックモデルを推定####
-##多項ロジットモデルの対数尤度関数
-loglike <- function(beta, y, X, N, select){
+##単語がすべて生成されるまで繰り返す
+rp <- 0
+repeat {
+  rp <- rp + 1
+  print(rp)
   
-  #ロジットと確率の計算
-  logit <- t(X %*% t(beta))
-  Pr <- exp(logit) / matrix(rowSums(exp(logit)), nrow=N, ncol=select)
+  ##パラメータの生成
+  #事前分布の設定
+  alpha <- rep(0.05, v)   #単語の事前分布のパラメータ
   
-  #対数尤度を定義
-  LLi <- rowSums(y * log(Pr))
-  LL <- sum(LLi)
-  val <- list(LLi=LLi, LL=LL)
-  return(val)
+  #多変量正規分布のパラメータを設定
+  mu <- rep(0, k-1)   #文書のパラメータ
+  tau <- corrM(k-1, -0.6, 0.9, 0.01, 0.2)
+  Cov <- Covt <- covmatrix(k-1, tau, 4.0, 4.0)$covariance
+  
+  #多変量正規分布からの乱数を多項ロジット変換して文書トピックを設定
+  beta <- betat <- cbind(mvrnorm(d, mu, Cov), 0)
+  theta <- thetat <- exp(beta) / rowSums(exp(beta))
+  
+  #単語分布をディレクリ分布から発生
+  phi <- extraDistr::rdirichlet(k, alpha)   
+  
+  #出現確率が低いphiの要素を入れ替える
+  index <- which(colMaxs(phi) < (k*5)/f)
+  for(j in 1:length(index)){
+    phi[as.numeric(rmnom(1, 1, extraDistr::rdirichlet(1, rep(2.5, k))) %*% 1:k), index[j]] <- (k*5)/f
+  }
+  phit <- phi
+  
+  ##トピックおよび単語データを発生
+  WX <- matrix(0, nrow=d, ncol=v)
+  ZX <- matrix(0, nrow=d, ncol=k)
+  word_list <- list()
+  
+  #多項分布からトピックを生成
+  Z <- rmnom(f, 1, theta[d_id, ])
+  z_vec <- as.numeric(Z %*% 1:k)
+  
+  #トピックから単語を生成
+  for(i in 1:d){
+    index <- d_index[[i]]
+    word <- rmnom(w[i], 1, phi[z_vec[index], ])
+    
+    #パラメータを格納
+    ZX[i, ] <- colSums(Z[index, ])
+    WX[i, ] <- colSums(word)
+    word_list[[i]] <- as.numeric(word %*% 1:v)
+  }
+  #break条件
+  if(min(colSums(WX)) > 0){
+    break
+  }
+}
+
+#リストを変換
+wd <- unlist(word_list)
+sparse_data <- sparseMatrix(1:f, wd, x=rep(1, f), dims=c(f, v))
+sparse_data_T <- t(sparse_data)
+
+
+####マルコフ連鎖モンテカルロ法でCorrelative Topic modelを推定####
+#対数事後分布を計算する関数
+loglike <- function(zsum, beta, mu, inv_Cov, k){
+  
+  #ロジットモデルの対数尤度
+  par <- cbind(beta, 0)
+  logit_exp <- exp(par)   #ロジットの期待値の指数
+  prob <- logit_exp / as.numeric(logit_exp %*% rep(1, k))   #選択確率
+  Li <- as.numeric((zsum * log(prob)) %*% rep(1, k))
+  
+  #多変量正規分布の対数事前分布
+  er <- beta - matrix(mu, nrow=d, ncol=k-1, byrow=T)
+  log_prior <- -1/2 * as.numeric((er %*% inv_Cov * er) %*% rep(1, k-1))
+  
+  #ユーザーごとの対数尤度
+  LLi <- Li + log_prior
+  return(LLi)
+}
+
+#対数事後分布の微分関数
+dloglike <- function(zsum_vec, Data, beta, mu, inv_Cov, z_dt, k){
+  
+  #応答確率の設定
+  par <- cbind(beta, 0)
+  logit_exp <- exp(par)   #ロジットの期待値の指数
+  prob <- logit_exp / as.numeric(logit_exp %*% rep(1, k))   #選択確率
+  prob_vec <- as.numeric(t(prob))
+  
+  #微分関数の設定
+  er <- beta - matrix(mu, nrow=d, ncol=k-1, byrow=T)
+  dlogit <- (zsum_vec - prob_vec) * Data   #ロジットモデルの対数尤度の微分関数
+  dmvn <- -t(inv_Cov %*% t(er))
+
+  #対数事後分布の微分関数の和
+  LLd <- -(z_dt %*% dlogit + dmvn)
+  return(LLd)
+}
+
+#リープフロッグ法を解く関数
+leapfrog <- function(r, z, D, e, L) {
+  leapfrog.step <- function(r, z, e){
+    r2 <- r  - e * D(wsum_vec, Data, z, mu, inv_Cov, z_dt, k) / 2
+    z2 <- z + e * r2
+    r2 <- r2 - e * D(wsum_vec, Data, z2, mu, inv_Cov, z_dt, k) / 2
+    list(r=r2, z=z2) # 1回の移動後の運動量と座標
+  }
+  leapfrog.result <- list(r=r, z=z)
+  for(i in 1:L) {
+    leapfrog.result <- leapfrog.step(leapfrog.result$r, leapfrog.result$z, e)
+  }
+  leapfrog.result
 }
 
 ##単語ごとに尤度と負担率を計算する関数
 burden_fr <- function(theta, phi, wd, w, k){
-  Bur <-  matrix(0, nrow=length(wd), ncol=k)   #負担係数の格納用
-  for(kk in 1:k){
-    #負担係数を計算
-    Bi <- rep(theta[, kk], w) * phi[kk, c(wd)]   #尤度
-    Bur[, kk] <- Bi   
-  }
-  
-  Br <- Bur / rowSums(Bur)   #負担率の計算
-  r <- colSums(Br) / sum(Br)   #混合率の計算
+  #負担係数を計算
+  Bur <- theta[w, ] * t(phi)[wd, ]   #尤度
+  Br <- Bur / rowSums(Bur)   #負担率
+  r <- colSums(Br) / sum(Br)   #混合率
   bval <- list(Br=Br, Bur=Bur, r=r)
   return(bval)
 }
 
 ##アルゴリズムの設定
-R <- 10000   #サンプリング回数
-keep <- 2   #2回に1回の割合でサンプリング結果を格納
+LL1 <- -100000000   #対数尤度の初期値
+R <- 5000
+keep <- 2  
 iter <- 0
+burnin <- 500/keep
+disp <- 10
+e <- 0.0025
+L <- 5
+
+##データとインデックスの設定
+#データの設定
+Data <- matrix(diag(k), nrow=d*k, ncol=k, byrow=T)[, -k]
+
+#インデックスの設定
+w_list <- list()
+for(j in 1:v){
+  w_list[[j]] <- which(wd==j)
+}
+w_dt <- sparseMatrix(wd, 1:f, x=rep(1, f), dims=c(v, f))
+d_dt <- sparseMatrix(d_id, 1:f, x=rep(1, f), dims=c(d, f))
+z_dt <- sparseMatrix(rep(1:d, rep(k, d)), 1:(k*d), x=rep(1, k*d), dims=c(d, k*d))
 
 ##事前分布の設定
-#ハイパーパラメータの事前分布
-alpha01 <- rep(0, k-1)
-nu <- k+1
-V <- nu * diag(k-1)
-alpha02 <- rep(0.5, v)
-beta0m <- matrix(1, nrow=v, ncol=k)
+#多変量正規分布の事前分布
+mu <- rep(0, k-1)
+nu <- k - 1
+V <- solve(nu * diag(k-1))
+
+#単語分布の事前分布
+alpha <- 0.1
+
+
+##パラメータの真値
+#多変量正規分布の真値
+beta <- betat 
+Cov <- Covt; inv_Cov <- solve(Cov)
+
+#トピックモデルの真値
+theta <- thetat
+phi <- phit
 
 ##パラメータの初期値
-#多変量正規分布からトピック分布を発生
-oldalpha <- rep(0, k-1)
-oldcov <- diag(k-1)
-cov_inv <- solve(oldcov)
-oldeta <- cbind(mvrnorm(d, oldalpha, oldcov), 1)
-theta <- exp(mv) / rowSums(exp(mv))
+#多変量正規分布の初期値
+beta <- mvrnorm(d, rep(0, k-1), diag(k-1))
+Cov <- diag(k-1); inv_Cov <- solve(Cov)
 
-#ディクレリ分布から単語分布を発生
-phi.ini <- runif(v, 0.5, 1)
-phi <- extraDistr::rdirichlet(k, phi.ini)   #単語トピックのパラメータの初期値
-
+#トピックモデルの初期値
+theta <- extraDistr::rdirichlet(d, rep(2.5, k))
+phi <- extraDistr::rdirichlet(k, rep(2.5, v))
 
 ##パラメータの格納用配列
+BETA <- array(0, dim=c(d, k-1, R/keep))
 THETA <- array(0, dim=c(d, k, R/keep))
-SIGMA <- array(0, dim=c(k-1, k-1, R/keep))
+COV <- array(0, dim=c(k-1, k-1, R/keep))
 PHI <- array(0, dim=c(k, v, R/keep))
-Z_SEG <- matrix(0, nrow=length(wd), ncol=k)
-storage.mode(Z_SEG) <- "integer"
+SEG <- matrix(0, nrow=f, ncol=k)
+storage.mode(SEG) <- "integer"
 gc(); gc()
 
 
-##MCMC推定用配列
-wsum0 <- matrix(0, nrow=d, ncol=k)
-vf0 <- matrix(0, nrow=v, ncol=k)
-x <- diag(k)[, -k]
-lognew <- rep(0, d)
-logold <- rep(0, d)
-logpnew <- rep(0, d)
-logpold <- rep(0, d)
+##対数尤度の基準値
+#ユニグラムモデルの対数尤度
+LLst <- sum(sparse_data %*% log(colSums(WX) / sum(WX)))
+
+#ベストなパラメータの対数尤度
+LLbest <- sum(log(rowSums(thetat[d_id, ] * t(phit)[wd, ])))
 
 
-####ギブスサンプリングでパラメータをサンプリング####
+####ハミルトニアンモンテカルロ法でパラメータをサンプリング####
 for(rp in 1:R){
-
+  
   ##単語ごとにトピックをサンプリング
-  #単語ごとにトピックの出現率を計算
-  word_rate <- burden_fr(theta, phi, wd, w, k)$Br
+  #トピックの割当確率
+  Lho <- theta[d_id, ] * t(phi)[wd, ]
+  topic_rate <- Lho / as.numeric(Lho %*% rep(1, k))
   
   #多項分布から単語トピックをサンプリング
-  Zi1 <- rmnom(nrow(word_rate), 1, word_rate)
-  word_z <- as.numeric(Zi1 %*% 1:k)
+  Zi <- rmnom(f, 1, topic_rate)
+  z_vec <- as.numeric(Zi %*% 1:k)
   
-  ##メトロポリスヘイスティング法で単語トピックのパラメータを更新
-  #多項ロジットモデルの応答変数を生成
-  for(i in 1:d){wsum0[i, ] <- colSums(Zi1[doc_list[[i]], ])}
   
-  #相関のある多項ロジットモデルのパラメータのサンプリング
+  ##ロジットモデルのパラメータサンプリング
+  #ロジットモデルの応答変数を設定
+  wsum <- d_dt %*% Zi
+  wsum_vec <- as.numeric(t(wsum))
+  
   #新しいパラメータをサンプリング
-  etad <- oldeta[, -k]
-  etan <- etad + matrix(rnorm(d*(k-1), 0, 0.1), nrow=d, ncol=k-1)
-  
-  #事前分布の誤差を計算
-  er_new <- etan - matrix(0, nrow=d, ncol=k-1, byrow=T)
-  er_old <- etad - matrix(0, nrow=d, ncol=k-1, byrow=T)
+  rold <- mvrnorm(d, rep(0, k-1), diag(k-1))   #標準多変量正規分布からパラメータを生成
+  betad <- beta
 
-  #対数尤度と対数事前分布を計算
-  lognew <- loglike(etan, wsum0, x, d, k)$LLi
-  logold <- loglike(etad, wsum0, x, d, k)$LLi
-  logpnew <- apply(er_new, 1, function(x) -0.5 * (x %*% cov_inv %*% x))
-  logpold <- apply(er_old, 1, function(x) -0.5 * (x %*% cov_inv %*% x))
+  #リープフロッグ法による1ステップ移動
+  res <- leapfrog(rold, betad, dloglike, e, L)
+  rnew <- res$r
+  betan <- res$z
   
-  #メトロポリスヘイスティング法でパラメータの採択を決定
-  rand <- runif(d)   #一様分布から乱数を発生
-  LLind_diff <- exp(lognew + logpnew - logold - logpold)   #採択率を計算
-  alpha <- (LLind_diff > 1)*1 + (LLind_diff <= 1)*LLind_diff
+  #移動前と移動後のハミルトニアン
+  Hnew <- -loglike(wsum, betan, mu, inv_Cov, k) + as.numeric(rnew^2 %*% rep(1, k-1))/2
+  Hold <- -loglike(wsum, betad, mu, inv_Cov, k) + as.numeric(rold^2 %*% rep(1, k-1))/2
+  
+  #パラメータの採択を決定
+  rand <- runif(d) #一様分布から乱数を発生
+  gamma <- rowMins(cbind(1, exp(Hold - Hnew)))   #採択率を決定
+  gamma_mu <- mean(gamma)
   
   #alphaの値に基づき新しいbetaを採択するかどうかを決定
-  flag <- matrix(((alpha >= rand)*1 + (alpha < rand)*0), nrow=d, ncol=k-1)
-  oldeta <- flag*etan + (1-flag)*etad   #alphaがrandを上回っていたら採択
+  flag <- as.numeric(gamma > rand)
+  beta <- as.matrix(flag*betan + (1-flag)*betad)
+
   
-  #多項ロジットモデルからthetaを更新
-  oldeta0 <- cbind(oldeta, 0)
-  theta <- exp(oldeta0) / rowSums(exp(oldeta0))
+  #パラメータを確率に変換
+  par <- exp(cbind(beta, 0))
+  theta <- par / rowSums(par) 
   
   ##逆ウィシャート分布から分散共分散行列をサンプリング
+  er <- beta - matrix(mu, nrow=d, ncol=k-1, byrow=T)
   V_par <- d + nu
-  R_par <- solve(V) + t(oldeta) %*% oldeta
-  oldcov <- rwishart(V_par, solve(R_par))$IW
-  cov_inv <- solve(oldcov)
-
+  R_par <- t(er) %*% er + V
+  Cov <- rwishart(V_par, solve(R_par))$IW
+  inv_Cov <- solve(Cov)
+  
+  
   ##ディクレリ分布からphiをサンプリング
-  for(i in 1:v){vf0[i, ] <- colSums(Zi1[word_list[[i]], ])}
-  vf <- vf0 + beta0m
-  phi <- extraDistr::rdirichlet(k, t(vf))
+  vsum <- t(w_dt %*% Zi) + alpha   #ディリクレ分布のパラメータ
+  phi <- extraDistr::rdirichlet(k, vsum)   
+  
   
   ##パラメータの格納とサンプリング結果の表示
   #サンプリングされたパラメータを格納
   if(rp%%keep==0){
     #サンプリング結果の格納
-    mkeep1 <- rp/keep
-    THETA[, , mkeep1] <- theta
-    PHI[, , mkeep1] <- phi
-    SIGMA[, , mkeep1] <- cov2cor(oldcov)
+    mkeep <- rp/keep
+    BETA[, , mkeep] <- beta
+    COV[, , mkeep] <- Cov
+    THETA[, , mkeep] <- theta
+    PHI[, , mkeep] <- phi
     
-    #トピック割当はサンプリング期間の半分を超えたら格納する
-    if(rp >= R/2){
-      Z_SEG <- Z_SEG + Zi1
+    #トピック割当はバーンイン期間を超えたら格納する
+    if(rp%%keep==0 & rp >= burnin){
+      SEG <- SEG + Zi
     }
+  }
   
+  if(rp%%disp==0){
+    #対数尤度を計算
+    LL <- sum(log(rowSums(Lho)))
+    
     #サンプリング結果を確認
     print(rp)
-    print(sum(lognew))
-    print(round(cbind(cov2cor(oldcov), cov2cor(sigma0)), 3))
-    print(round(rbind(theta[1:5, ], theta0[1:5, ]), 3))
+    print(gamma_mu)
+    print(c(LL, LLbest, LLst))
+    print(sum(loglike(wsum, beta, mu, inv_Cov, k)))
+    print(round(cov2cor(Cov[1:7, 1:7]), 2))
+    print(round(rbind(theta[1:5, ], thetat[1:5, ]), 3))
   }
 }
 
