@@ -41,7 +41,9 @@ for(i in 1:hh){
 }
 
 ##すべてのアイテムが生成されるまで繰り返す
-for(rp in 1:1000){
+rp <- 0
+repeat {
+  rp <- rp + 1
   print(rp)
   
   ##ユーザーとアイテムの経緯度を生成
@@ -73,7 +75,7 @@ for(rp in 1:1000){
   geo_item0 <- matrix(0, nrow=item, ncol=2)
   for(j in 1:s){
     index <- which(point==j)
-      if(length(index) > 0){
+    if(length(index) > 0){
       cov <- runif(2, 0.005, 0.125) * diag(2)
       cov[1, 2] <- cov[2, 1] <- runif(1, -0.6, 0.6) * prod(sqrt(diag(cov)))
       geo_item0[index, ] <- mvrnorm(length(index), c(runif(1, longitude[1], longitude[2]), runif(1, latitude[1], latitude[2])), cov)
@@ -263,10 +265,10 @@ phi_par <- t(exp(phit))
 d_par <- exp(-beta/2 * d)
 d_par_matrix <- matrix(exp(-beta/2 * d0), nrow=hh, ncol=item, byrow=T)
 denom_par <- (d_par_matrix %*% phi_par)[d_id, ]   #分母を設定
-prob_spot <- (phi_par[v, ] * d_par) / denom_par   #トピックごとに選択確率を算出
+prob_spot_best <- (phi_par[v, ] * d_par) / denom_par   #トピックごとに選択確率を算出
 
 #観測データの対数尤度
-LLbest <- sum(log((thetat[d_id, ] * prob_spot) %*% rep(1, k)))   
+LLbest <- sum(log((thetat[d_id, ] * prob_spot_best) %*% rep(1, k)))   
 
 
 ####HMC法でパラメータをサンプリング####
@@ -315,7 +317,7 @@ for(rp in 1:R){   #dlがtol以上の場合は繰り返す
     flag <- gamma > rand
     phi[j, -1] <- flag*phin + (1-flag)*phid
   }
-
+  
   
   #場所選択確率を更新
   phi_par <- t(exp(phi))
