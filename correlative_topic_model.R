@@ -93,7 +93,7 @@ repeat {
   #‘½•Ï—Ê³‹K•ª•z‚Ìƒpƒ‰ƒ[ƒ^‚ğİ’è
   mu <- rep(0, k-1)   #•¶‘‚Ìƒpƒ‰ƒ[ƒ^
   tau <- corrM(k-1, -0.6, 0.9, 0.01, 0.2)
-  Cov <- Covt <- covmatrix(k-1, tau, 4.0, 4.0)$covariance
+  Cov <- Covt <- covmatrix(k-1, tau, 7.5, 7.5)$covariance
   
   #‘½•Ï—Ê³‹K•ª•z‚©‚ç‚Ì—”‚ğ‘½€ƒƒWƒbƒg•ÏŠ·‚µ‚Ä•¶‘ƒgƒsƒbƒN‚ğİ’è
   beta <- betat <- cbind(mvrnorm(d, mu, Cov), 0)
@@ -142,13 +142,13 @@ sparse_data_T <- t(sparse_data)
 
 ####ƒ}ƒ‹ƒRƒt˜A½ƒ‚ƒ“ƒeƒJƒ‹ƒ–@‚ÅCorrelative Topic model‚ğ„’è####
 #‘Î”–Œã•ª•z‚ğŒvZ‚·‚éŠÖ”
-loglike <- function(zsum, beta, mu, inv_Cov, k){
+loglike <- function(wsum, beta, mu, inv_Cov, k){
   
   #ƒƒWƒbƒgƒ‚ƒfƒ‹‚Ì‘Î”–Ş“x
   par <- cbind(beta, 0)
   logit_exp <- exp(par)   #ƒƒWƒbƒg‚ÌŠú‘Ò’l‚Ìw”
   prob <- logit_exp / as.numeric(logit_exp %*% rep(1, k))   #‘I‘ğŠm—¦
-  Li <- as.numeric((zsum * log(prob)) %*% rep(1, k))
+  Li <- as.numeric((wsum * log(prob)) %*% rep(1, k))
   
   #‘½•Ï—Ê³‹K•ª•z‚Ì‘Î”–‘O•ª•z
   er <- beta - matrix(mu, nrow=d, ncol=k-1, byrow=T)
@@ -160,30 +160,29 @@ loglike <- function(zsum, beta, mu, inv_Cov, k){
 }
 
 #‘Î”–Œã•ª•z‚Ì”÷•ªŠÖ”
-dloglike <- function(zsum_vec, Data, beta, mu, inv_Cov, z_dt, k){
+dloglike <- function(wsum, beta, mu, inv_Cov, z_dt, k){
   
   #‰“šŠm—¦‚Ìİ’è
   par <- cbind(beta, 0)
   logit_exp <- exp(par)   #ƒƒWƒbƒg‚ÌŠú‘Ò’l‚Ìw”
   prob <- logit_exp / as.numeric(logit_exp %*% rep(1, k))   #‘I‘ğŠm—¦
-  prob_vec <- as.numeric(t(prob))
   
   #”÷•ªŠÖ”‚Ìİ’è
   er <- beta - matrix(mu, nrow=d, ncol=k-1, byrow=T)
-  dlogit <- (zsum_vec - prob_vec) * Data   #ƒƒWƒbƒgƒ‚ƒfƒ‹‚Ì‘Î”–Ş“x‚Ì”÷•ªŠÖ”
+  dlogit <- (wsum - w*prob)[, -k]   #ƒƒWƒbƒgƒ‚ƒfƒ‹‚Ì‘Î”–Ş“x‚Ì”÷•ªŠÖ”
   dmvn <- -t(inv_Cov %*% t(er))
 
   #‘Î”–Œã•ª•z‚Ì”÷•ªŠÖ”‚Ì˜a
-  LLd <- -(z_dt %*% dlogit + dmvn)
+  LLd <- -(dlogit + dmvn)
   return(LLd)
 }
 
 #ƒŠ[ƒvƒtƒƒbƒO–@‚ğ‰ğ‚­ŠÖ”
 leapfrog <- function(r, z, D, e, L) {
   leapfrog.step <- function(r, z, e){
-    r2 <- r  - e * D(wsum_vec, Data, z, mu, inv_Cov, z_dt, k) / 2
+    r2 <- r  - e * D(wsum, z, mu, inv_Cov, z_dt, k) / 2
     z2 <- z + e * r2
-    r2 <- r2 - e * D(wsum_vec, Data, z2, mu, inv_Cov, z_dt, k) / 2
+    r2 <- r2 - e * D(wsum, z2, mu, inv_Cov, z_dt, k) / 2
     list(r=r2, z=z2) # 1‰ñ‚ÌˆÚ“®Œã‚Ì‰^“®—Ê‚ÆÀ•W
   }
   leapfrog.result <- list(r=r, z=z)
@@ -205,13 +204,13 @@ burden_fr <- function(theta, phi, wd, w, k){
 
 ##ƒAƒ‹ƒSƒŠƒYƒ€‚Ìİ’è
 LL1 <- -100000000   #‘Î”–Ş“x‚Ì‰Šú’l
-R <- 5000
+R <- 2000
 keep <- 2  
 iter <- 0
 burnin <- 500/keep
 disp <- 10
-e <- 0.0025
-L <- 5
+e <- 0.1
+L <- 3
 
 ##ƒf[ƒ^‚ÆƒCƒ“ƒfƒbƒNƒX‚Ìİ’è
 #ƒf[ƒ^‚Ìİ’è
@@ -238,7 +237,7 @@ alpha <- 0.1
 
 ##ƒpƒ‰ƒ[ƒ^‚Ì^’l
 #‘½•Ï—Ê³‹K•ª•z‚Ì^’l
-beta <- betat 
+beta <- betat[, -k]
 Cov <- Covt; inv_Cov <- solve(Cov)
 
 #ƒgƒsƒbƒNƒ‚ƒfƒ‹‚Ì^’l
@@ -293,7 +292,7 @@ for(rp in 1:R){
   #V‚µ‚¢ƒpƒ‰ƒ[ƒ^‚ğƒTƒ“ƒvƒŠƒ“ƒO
   rold <- mvrnorm(d, rep(0, k-1), diag(k-1))   #•W€‘½•Ï—Ê³‹K•ª•z‚©‚çƒpƒ‰ƒ[ƒ^‚ğ¶¬
   betad <- beta
-
+  
   #ƒŠ[ƒvƒtƒƒbƒO–@‚É‚æ‚é1ƒXƒeƒbƒvˆÚ“®
   res <- leapfrog(rold, betad, dloglike, e, L)
   rnew <- res$r
@@ -311,8 +310,8 @@ for(rp in 1:R){
   #alpha‚Ì’l‚ÉŠî‚Ã‚«V‚µ‚¢beta‚ğÌ‘ğ‚·‚é‚©‚Ç‚¤‚©‚ğŒˆ’è
   flag <- as.numeric(gamma > rand)
   beta <- as.matrix(flag*betan + (1-flag)*betad)
-
   
+
   #ƒpƒ‰ƒ[ƒ^‚ğŠm—¦‚É•ÏŠ·
   par <- exp(cbind(beta, 0))
   theta <- par / rowSums(par) 
@@ -355,7 +354,7 @@ for(rp in 1:R){
     print(gamma_mu)
     print(c(LL, LLbest, LLst))
     print(sum(loglike(wsum, beta, mu, inv_Cov, k)))
-    print(round(cov2cor(Cov[1:7, 1:7]), 2))
+    print(round(cov2cor(Cov[1:10, 1:10]), 2))
     print(round(rbind(theta[1:5, ], thetat[1:5, ]), 3))
   }
 }
@@ -371,13 +370,10 @@ matplot(t(THETA[3, , ]), type="l", ylab="ƒpƒ‰ƒ[ƒ^", main="•¶‘3‚ÌƒgƒsƒbƒN•ª•z‚
 matplot(t(THETA[4, , ]), type="l", ylab="ƒpƒ‰ƒ[ƒ^", main="•¶‘4‚ÌƒgƒsƒbƒN•ª•z‚ÌƒTƒ“ƒvƒŠƒ“ƒOŒ‹‰Ê")
 
 #•ªU‹¤•ªUs—ñ‚ÌƒTƒ“ƒvƒŠƒ“ƒOŒ‹‰Ê
-matplot(t(SIGMA[1,  , ]), type="l", ylab="ƒpƒ‰ƒ[ƒ^")
-matplot(t(SIGMA[2,  , ]), type="l", ylab="ƒpƒ‰ƒ[ƒ^")
-matplot(t(SIGMA[3,  , ]), type="l", ylab="ƒpƒ‰ƒ[ƒ^")
-matplot(t(SIGMA[4,  , ]), type="l", ylab="ƒpƒ‰ƒ[ƒ^")
-matplot(t(SIGMA[5,  , ]), type="l", ylab="ƒpƒ‰ƒ[ƒ^")
-matplot(t(SIGMA[6,  , ]), type="l", ylab="ƒpƒ‰ƒ[ƒ^")
-matplot(t(SIGMA[7,  , ]), type="l", ylab="ƒpƒ‰ƒ[ƒ^")
+matplot(t(COV[1,  , ]), type="l", ylab="ƒpƒ‰ƒ[ƒ^")
+matplot(t(COV[2,  , ]), type="l", ylab="ƒpƒ‰ƒ[ƒ^")
+matplot(t(COV[3,  , ]), type="l", ylab="ƒpƒ‰ƒ[ƒ^")
+matplot(t(COV[4,  , ]), type="l", ylab="ƒpƒ‰ƒ[ƒ^")
 
 #’PŒê‚ÌoŒ»Šm—¦‚ÌƒTƒ“ƒvƒŠƒ“ƒOŒ‹‰Ê
 matplot(t(PHI[1, 1:10, ]), type="l", ylab="ƒpƒ‰ƒ[ƒ^", main="ƒgƒsƒbƒN1‚Ì’PŒê‚ÌoŒ»—¦‚ÌƒTƒ“ƒvƒŠƒ“ƒOŒ‹‰Ê")
