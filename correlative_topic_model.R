@@ -317,7 +317,7 @@ for(rp in 1:R){
   theta <- par / rowSums(par) 
   
   ##逆ウィシャート分布から分散共分散行列をサンプリング
-  er <- beta - matrix(mu, nrow=d, ncol=k-1, byrow=T)
+  er <- beta - matrix(colMeans(beta), nrow=d, ncol=k-1, byrow=T)
   V_par <- d + nu
   R_par <- t(er) %*% er + V
   Cov <- rwishart(V_par, solve(R_par))$IW
